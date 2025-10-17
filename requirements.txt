@@ -1,0 +1,7 @@
+PySide6
+Pillow
+opencv-python
+rembg
+transformers
+torch
+PyInstaller
