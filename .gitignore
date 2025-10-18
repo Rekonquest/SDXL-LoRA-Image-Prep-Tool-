@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Application Logs
+app.log
+
+# Test Images
+test_images/*.png
+test_images/*.jpg
