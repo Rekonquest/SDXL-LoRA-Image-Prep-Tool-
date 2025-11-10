@@ -2,14 +2,15 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, Slot
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QProgressBar, QSplitter, QComboBox, QMessageBox, QCheckBox, QSpinBox, QLineEdit
 )
 
 from ui_components import ThumbnailGallery, CropOverlay
-from worker import ScanManager, ScanConfig, ExportManager
+from worker import ScanManager, ScanConfig, ExportManager, VLMCropManager
+from vlm_cropper_dialog import VLMCropperDialog
 from PySide6.QtGui import QPixmap, QAction
 from utils import AppSettings
 from settings_dialog import SettingsDialog
@@ -24,6 +25,8 @@ class MainWindow(QMainWindow):
         self.filtered = []
         self.current = None
         self.settings = AppSettings(Path.home() / ".jewels_settings.json")
+        self.export_manager = None
+        self.vlm_crop_manager = None
 
         open_btn = QPushButton("Select Image Folder")
         open_btn.clicked.connect(self.select_folder)
@@ -67,6 +70,9 @@ class MainWindow(QMainWindow):
         top.addWidget(self.include_edit, 2); top.addWidget(self.exclude_edit, 2)
         top.addStretch(1)
         top.addWidget(export_btn)
+        vlm_crop_btn = QPushButton("VLM Cropper")
+        vlm_crop_btn.clicked.connect(self.open_vlm_cropper)
+        top.addWidget(vlm_crop_btn)
 
         self.gallery = ThumbnailGallery()
         self.gallery.itemSelectionChanged.connect(self.on_select)
@@ -192,6 +198,47 @@ class MainWindow(QMainWindow):
             self.exclude_edit.setText(self.settings.data.get("exclude_globs", ""))
             self.autofix_chk.setChecked(self.settings.data.get("autofix", True))
             self.statusBar().showMessage("Settings saved.", 3000)
+
+    def open_vlm_cropper(self):
+        dialog = VLMCropperDialog(self.settings, self)
+        if not dialog.exec():
+            return
+
+        job_data = dialog.get_settings()
+
+        if not job_data["image_paths"] or not job_data["output_dir"].exists():
+            QMessageBox.warning(self, "VLM Cropper", "You must select images and a valid output folder.")
+            return
+
+        self.vlm_crop_manager = VLMCropManager(
+            image_paths=job_data["image_paths"],
+            output_dir=job_data["output_dir"],
+            prompt=job_data["prompt"],
+            lm_settings=job_data["lm_settings"]
+        )
+        self.vlm_crop_thread = QThread(self)
+        self.vlm_crop_manager.moveToThread(self.vlm_crop_thread)
+        self.vlm_crop_thread.started.connect(self.vlm_crop_manager.run)
+        self.vlm_crop_manager.progress.connect(self.on_vlm_progress)
+        self.vlm_crop_manager.finished.connect(self.on_vlm_finished)
+        self.vlm_crop_manager.finished.connect(self.vlm_crop_thread.quit)
+        self.vlm_crop_manager.finished.connect(self.vlm_crop_manager.deleteLater)
+        self.vlm_crop_thread.finished.connect(self.vlm_crop_thread.deleteLater)
+
+        self.progress.setValue(0)
+        self.progress.setFormat("VLM Cropping... %p%")
+        self.vlm_crop_thread.start()
+
+    @Slot(int, int)
+    def on_vlm_progress(self, done, total):
+        self.progress.setMaximum(total)
+        self.progress.setValue(done)
+
+    @Slot()
+    def on_vlm_finished(self):
+        self.statusBar().showMessage("VLM Cropping complete.", 5000)
+        self.progress.setFormat("Idle")
+        self.vlm_crop_manager = None
 
 def headless_main(folder: Path):
     from worker import ScanManager, ScanConfig

@@ -3,7 +3,8 @@ from pathlib import Path
 from typing import List, Tuple, Dict
 import fnmatch, csv
 import imagehash
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
+from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Slot
+from PIL import PngImagePlugin
 
 from PySide6.QtGui import QImage
 from image_processing import (
@@ -12,7 +13,9 @@ from image_processing import (
     auto_fix_to_standard, intelligent_square_crop
 )
 from utils import slugify
-from caption_providers import lmstudio_caption, lmstudio_tags, lmstudio_describe
+from caption_providers import (
+    lmstudio_caption, lmstudio_tags, lmstudio_describe, lmstudio_get_bbox
+)
 
 @dataclass
 class ScanConfig:
@@ -274,7 +277,18 @@ class ExportImageRunnable(QRunnable):
 
                     saved_path = self.out_dir / target_dir / f"{final_stem}.{target}.png"
                     pil_out = cv_to_pil(out)
-                    pil_out.save(saved_path, optimize=True)
+
+                    info = PngImagePlugin.PngInfo()
+                    if self.metadata_template.get("Artist"):
+                        info.add_text("Artist", self.metadata_template["Artist"])
+                    if self.metadata_template.get("Copyright"):
+                        info.add_text("Copyright", self.metadata_template["Copyright"])
+                    if self.metadata_template.get("ImageDescription"):
+                        info.add_text("Description", self.metadata_template["ImageDescription"])
+                    if self.metadata_template.get("UserComment"):
+                        info.add_text("Comment", self.metadata_template["UserComment"])
+
+                    pil_out.save(saved_path, optimize=True, pnginfo=info)
                     category_out = target_dir
 
                     if self.lm_settings.get("enabled"):
@@ -344,3 +358,99 @@ class ExportImageRunnable(QRunnable):
             pass
         finally:
             self.callback(manifest_row)
+
+class VLMCropSignals(QObject):
+    job_done = Signal(str)
+
+class VLMCropRunnable(QRunnable):
+    def __init__(self, path: str, output_dir: Path, prompt: str,
+                 lm_settings: dict, signals: VLMCropSignals):
+        super().__init__()
+        self.path = path
+        self.output_dir = output_dir
+        self.prompt = prompt
+        self.lm_settings = lm_settings
+        self.signals = signals
+
+    @Slot()
+    def run(self):
+        try:
+            bbox = lmstudio_get_bbox(
+                self.lm_settings.get("endpoint"),
+                self.lm_settings.get("model"),
+                self.path,
+                self.prompt
+            )
+
+            if not bbox:
+                raise Exception("VLM did not return a valid bounding box.")
+
+            cv_img = pil_to_cv(load_image_fix(Path(self.path)))
+            h, w = cv_img.shape[:2]
+
+            x1, y1, x2, y2 = bbox
+
+            # Safety-check and clamp coordinates to image bounds
+            x1 = max(0, min(x1, w - 1))
+            y1 = max(0, min(y1, h - 1))
+            x2 = max(0, min(x2, w))
+            y2 = max(0, min(y2, h))
+
+            # Ensure coordinates are valid (x1 < x2, y1 < y2)
+            if x1 >= x2 or y1 >= y2:
+                raise Exception(f"Invalid coordinates: [{x1},{y1},{x2},{y2}]")
+
+            crop_img = cv_img[y1:y2, x1:x2]
+
+            if crop_img.size == 0:
+                raise Exception("Crop resulted in an empty image.")
+
+            out_path = self.output_dir / Path(self.path).name
+            cv_to_pil(crop_img).save(out_path, optimize=True)
+
+        except Exception as e:
+            print(f"VLM Crop failed for {self.path}: {e}")
+        finally:
+            self.signals.job_done.emit(self.path)
+
+class VLMCropManager(QObject):
+    progress = Signal(int, int)
+    finished = Signal()
+
+    def __init__(self, image_paths: list[str], output_dir: Path,
+                 prompt: str, lm_settings: dict):
+        super().__init__()
+        self.image_paths = image_paths
+        self.output_dir = output_dir
+        self.prompt = prompt
+        self.lm_settings = lm_settings
+
+        self.signals = VLMCropSignals()
+        self.signals.job_done.connect(self.on_job_done)
+
+        self.total = len(self.image_paths)
+        self.done = 0
+
+    @Slot(str)
+    def on_job_done(self, path):
+        self.done += 1
+        self.progress.emit(self.done, self.total)
+        if self.done == self.total:
+            self.finished.emit()
+
+    @Slot()
+    def run(self):
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            for path in self.image_paths:
+                runnable = VLMCropRunnable(
+                    path,
+                    self.output_dir,
+                    self.prompt,
+                    self.lm_settings,
+                    self.signals
+                )
+                QThreadPool.globalInstance().start(runnable)
+        except Exception as e:
+            print(f"VLMCropManager failed to start: {e}")
+            self.finished.emit()

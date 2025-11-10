@@ -25,6 +25,7 @@ class SettingsDialog(QDialog):
         self.lm_model = QLineEdit(self.s.data["lmstudio"]["model"])
         self.lm_prefix = QLineEdit(self.s.data["lmstudio"]["prefix"])
         self.lm_pattern = QLineEdit(self.s.data["lmstudio"]["rename_pattern"])
+        self.vlm_prompt = QLineEdit(self.s.data["vlm_cropper_prompt"])
 
         lay.addRow("Pass threshold ≥", self.pass_thr)
         lay.addRow("Select min score ≥", self.sel_thr)
@@ -42,6 +43,7 @@ class SettingsDialog(QDialog):
         lay.addRow("LM Studio model", self.lm_model)
         lay.addRow("Filename prefix", self.lm_prefix)
         lay.addRow("Rename pattern", self.lm_pattern)
+        lay.addRow("VLM Crop Prompt", self.vlm_prompt)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         btns.accepted.connect(self.accept)
@@ -67,5 +69,6 @@ class SettingsDialog(QDialog):
         self.s.data["lmstudio"]["model"] = self.lm_model.text().strip()
         self.s.data["lmstudio"]["prefix"] = self.lm_prefix.text().strip()
         self.s.data["lmstudio"]["rename_pattern"] = self.lm_pattern.text().strip()
+        self.s.data["vlm_cropper_prompt"] = self.vlm_prompt.text().strip()
         self.s.save()
         super().accept()

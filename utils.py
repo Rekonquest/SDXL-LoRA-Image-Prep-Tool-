@@ -21,6 +21,7 @@ class AppSettings:
         "buckets": [1024,1152,1216],
         "autofix": True,
         "enable_intelligent_crop": True,
+        "vlm_cropper_prompt": "Find the bounding box for the main subject. Respond ONLY with a single JSON object in the format: {\"bbox\": [x1, y1, x2, y2]}",
         "max_upscale_factor": 2.0,
         "enable_deblock": True,
         "metadata_template": {
