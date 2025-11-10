@@ -130,7 +130,8 @@ class ExportManager(QObject):
     finished = Signal(str)
 
     def __init__(self, items: List[dict], out_dir: Path, buckets=(1024,1152,1216),
-                 apply_autofix=True, cfg: ScanConfig|None=None, lm_settings: dict|None=None):
+                 apply_autofix=True, cfg: ScanConfig|None=None, lm_settings: dict|None=None,
+                 metadata_template: dict|None=None, enable_intelligent_crop: bool=True):
         super().__init__()
         self.items = items
         self.out_dir = out_dir
@@ -138,6 +139,8 @@ class ExportManager(QObject):
         self.apply_autofix = apply_autofix
         self.cfg = cfg or ScanConfig()
         self.lm_settings = lm_settings or {}
+        self.metadata_template = metadata_template or {}
+        self.enable_intelligent_crop = enable_intelligent_crop
         self.pool = QThreadPool.globalInstance()
         self.done = 0
         self.total = len(self.items)
@@ -153,7 +156,7 @@ class ExportManager(QObject):
             keepers.add(k["name"])
 
         for i, item in enumerate(self.items):
-            runnable = ExportImageRunnable(item, self.out_dir, self.buckets, self.apply_autofix, self.cfg, self.lm_settings, keepers, self.on_export_progress)
+            runnable = ExportImageRunnable(item, i, self.out_dir, self.buckets, self.apply_autofix, self.cfg, self.lm_settings, self.metadata_template, self.enable_intelligent_crop, keepers, self.on_export_progress)
             self.pool.start(runnable)
 
     def on_export_progress(self, manifest_row):
@@ -186,15 +189,18 @@ class ExportManager(QObject):
         return groups
 
 class ExportImageRunnable(QRunnable):
-    def __init__(self, item: dict, out_dir: Path, buckets, apply_autofix,
-                 cfg, lm_settings, keepers, callback):
+    def __init__(self, item: dict, index: int, out_dir: Path, buckets, apply_autofix,
+                 cfg, lm_settings, metadata_template, enable_intelligent_crop: bool, keepers, callback):
         super().__init__()
         self.item = item
+        self.index = index
         self.out_dir = out_dir
         self.buckets = buckets
         self.apply_autofix = apply_autofix
         self.cfg = cfg
         self.lm_settings = lm_settings
+        self.metadata_template = metadata_template
+        self.enable_intelligent_crop = enable_intelligent_crop
         self.keepers = keepers
         self.callback = callback
 
@@ -241,7 +247,10 @@ class ExportImageRunnable(QRunnable):
                     target_dir = "rescued" if (label == "FAIL") else "pass"
                     cv = fixed_img if fixed_img is not None else cv_orig
                     target = min(self.buckets, key=lambda b: abs(b - max(cv.shape[:2])))
-                    out = bucket_square(cv, target)
+                    if fixed_img is not None and self.enable_intelligent_crop:
+                        out = intelligent_square_crop(cv, target)
+                    else:
+                        out = bucket_square(cv, target)
                     saved_path = self.out_dir / target_dir / f"{src.stem}.{target}.png"
                     cv_to_pil(out).save(saved_path, optimize=True)
                     category_out = target_dir

@@ -15,6 +15,7 @@ class SettingsDialog(QDialog):
         self.exclude = QLineEdit(self.s.data["exclude_globs"])
         self.max_up = QDoubleSpinBox(); self.max_up.setRange(1.0,8.0); self.max_up.setSingleStep(0.1); self.max_up.setValue(self.s.data["max_upscale_factor"])
         self.deblock = QCheckBox(); self.deblock.setChecked(self.s.data["enable_deblock"])
+        self.enable_crop = QCheckBox(); self.enable_crop.setChecked(self.s.data["enable_intelligent_crop"])
         self.artist = QLineEdit(self.s.data["metadata_template"].get("Artist",""))
         self.copyright = QLineEdit(self.s.data["metadata_template"].get("Copyright",""))
         self.desc = QLineEdit(self.s.data["metadata_template"].get("ImageDescription",""))
@@ -31,6 +32,7 @@ class SettingsDialog(QDialog):
         lay.addRow("Exclude globs", self.exclude)
         lay.addRow("Max upscale factor", self.max_up)
         lay.addRow("Enable JPEG deblock", self.deblock)
+        lay.addRow("Enable intelligent crop", self.enable_crop)
         lay.addRow("EXIF Artist", self.artist)
         lay.addRow("EXIF Copyright", self.copyright)
         lay.addRow("EXIF ImageDescription", self.desc)
@@ -53,6 +55,7 @@ class SettingsDialog(QDialog):
         self.s.data["exclude_globs"] = self.exclude.text().strip()
         self.s.data["max_upscale_factor"] = float(self.max_up.value())
         self.s.data["enable_deblock"] = self.deblock.isChecked()
+        self.s.data["enable_intelligent_crop"] = self.enable_crop.isChecked()
         self.s.data["metadata_template"] = {
             "Artist": self.artist.text(),
             "Copyright": self.copyright.text(),

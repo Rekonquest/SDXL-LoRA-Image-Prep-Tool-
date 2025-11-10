@@ -192,8 +192,6 @@ def auto_fix_to_standard(cv_img: np.ndarray,
 
     cv_img = minside_upscale(cv_img, min_side=min_side)
 
-    cv_img = intelligent_square_crop(cv_img, target=min_side)
-
     post = score_image(cv_img, sharp_target, noise_max, w_sharp, w_contrast, w_noise)
     return cv_img, pre, post
 

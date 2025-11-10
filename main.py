@@ -138,7 +138,9 @@ class MainWindow(QMainWindow):
             buckets=self.settings.data.get("buckets", [1024, 1152, 1216]),
             apply_autofix=self.autofix_chk.isChecked(),
             cfg=cfg,
-            lm_settings=self.settings.data.get("lmstudio", {})
+            lm_settings=self.settings.data.get("lmstudio", {}),
+            metadata_template=self.settings.data.get("metadata_template", {}),
+            enable_intelligent_crop=self.settings.data.get("enable_intelligent_crop", True)
         )
         self.export_manager.progress.connect(self.on_progress)
         self.export_manager.finished.connect(self.on_export_done)

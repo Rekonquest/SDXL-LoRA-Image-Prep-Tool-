@@ -20,6 +20,7 @@ class AppSettings:
         "exclude_globs": "",
         "buckets": [1024,1152,1216],
         "autofix": True,
+        "enable_intelligent_crop": True,
         "max_upscale_factor": 2.0,
         "enable_deblock": True,
         "metadata_template": {
