@@ -130,13 +130,14 @@ class ExportManager(QObject):
     finished = Signal(str)
 
     def __init__(self, items: List[dict], out_dir: Path, buckets=(1024,1152,1216),
-                 apply_autofix=True, cfg: ScanConfig|None=None):
+                 apply_autofix=True, cfg: ScanConfig|None=None, lm_settings: dict|None=None):
         super().__init__()
         self.items = items
         self.out_dir = out_dir
         self.buckets = buckets
         self.apply_autofix = apply_autofix
         self.cfg = cfg or ScanConfig()
+        self.lm_settings = lm_settings or {}
         self.pool = QThreadPool.globalInstance()
         self.done = 0
         self.total = len(self.items)
@@ -152,7 +153,7 @@ class ExportManager(QObject):
             keepers.add(k["name"])
 
         for i, item in enumerate(self.items):
-            runnable = ExportImageRunnable(item, self.out_dir, self.buckets, self.apply_autofix, self.cfg, keepers, self.on_export_progress)
+            runnable = ExportImageRunnable(item, self.out_dir, self.buckets, self.apply_autofix, self.cfg, self.lm_settings, keepers, self.on_export_progress)
             self.pool.start(runnable)
 
     def on_export_progress(self, manifest_row):
@@ -185,13 +186,15 @@ class ExportManager(QObject):
         return groups
 
 class ExportImageRunnable(QRunnable):
-    def __init__(self, item, out_dir, buckets, apply_autofix, cfg, keepers, callback):
+    def __init__(self, item: dict, out_dir: Path, buckets, apply_autofix,
+                 cfg, lm_settings, keepers, callback):
         super().__init__()
         self.item = item
         self.out_dir = out_dir
         self.buckets = buckets
         self.apply_autofix = apply_autofix
         self.cfg = cfg
+        self.lm_settings = lm_settings
         self.keepers = keepers
         self.callback = callback
 
@@ -239,8 +242,43 @@ class ExportImageRunnable(QRunnable):
                     cv = fixed_img if fixed_img is not None else cv_orig
                     target = min(self.buckets, key=lambda b: abs(b - max(cv.shape[:2])))
                     out = bucket_square(cv, target)
-                    cv_to_pil(out).save(self.out_dir / target_dir / f"{src.stem}.{target}.png", optimize=True)
+                    saved_path = self.out_dir / target_dir / f"{src.stem}.{target}.png"
+                    cv_to_pil(out).save(saved_path, optimize=True)
                     category_out = target_dir
+
+                    if self.lm_settings.get("enabled"):
+                        prompt_key = "caption_prompt_pass"
+                        if category_out == "rescued":
+                            prompt_key = "caption_prompt_rescued"
+
+                        cap_prompt = self.lm_settings.get(prompt_key, "")
+                        tag_prompt = self.lm_settings.get("tags_prompt", "")
+
+                        if cap_prompt and self.lm_settings.get("save_captions", True):
+                            try:
+                                caption = lmstudio_caption(
+                                    self.lm_settings.get("endpoint"),
+                                    self.lm_settings.get("model"),
+                                    str(saved_path),
+                                    cap_prompt,
+                                    self.lm_settings.get("vision_mode", False)
+                                )
+                                (saved_path.parent / f"{saved_path.stem}.txt").write_text(caption, encoding="utf-8")
+                            except Exception as e:
+                                print(f"LM Studio caption failed for {src.name}: {e}")
+
+                        if tag_prompt and self.lm_settings.get("save_captions", True):
+                            try:
+                                tags = lmstudio_tags(
+                                    self.lm_settings.get("endpoint"),
+                                    self.lm_settings.get("model"),
+                                    str(saved_path),
+                                    tag_prompt,
+                                    self.lm_settings.get("vision_mode", False)
+                                )
+                                (saved_path.parent / f"{saved_path.stem}.tags.txt").write_text(tags, encoding="utf-8")
+                            except Exception as e:
+                                print(f"LM Studio tagging failed for {src.name}: {e}")
                 else:
                     final_score = post.get("final", pre.get("final",0))
                     near = (self.cfg.pass_threshold - final_score) <= 5.0

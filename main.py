@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (
 
 from ui_components import ThumbnailGallery, CropOverlay
 from worker import ScanManager, ScanConfig, ExportManager
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QAction
+from utils import AppSettings
+from settings_dialog import SettingsDialog
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -21,6 +23,7 @@ class MainWindow(QMainWindow):
         self.items = []
         self.filtered = []
         self.current = None
+        self.settings = AppSettings(Path.home() / ".jewels_settings.json")
 
         open_btn = QPushButton("Select Image Folder")
         open_btn.clicked.connect(self.select_folder)
@@ -30,17 +33,31 @@ class MainWindow(QMainWindow):
         self.filter_box.currentTextChanged.connect(self.apply_filter)
 
         self.autofix_chk = QCheckBox("Auto-fix failing images")
-        self.pass_spin = QSpinBox(); self.pass_spin.setRange(50, 100); self.pass_spin.setValue(95)
+        self.autofix_chk.setChecked(self.settings.data.get("autofix", True))
+        self.pass_spin = QSpinBox()
+        self.pass_spin.setRange(50, 100)
+        self.pass_spin.setValue(self.settings.data.get("pass_threshold", 95.0))
 
-        self.selmin_spin = QSpinBox(); self.selmin_spin.setRange(50, 100); self.selmin_spin.setValue(90)
-        self.include_edit = QLineEdit(); self.include_edit.setPlaceholderText("include globs (comma-separated) e.g. */portraits/*, *2024*")
-        self.exclude_edit = QLineEdit(); self.exclude_edit.setPlaceholderText("exclude globs e.g. */screenshots/*, *memes*")
+        self.selmin_spin = QSpinBox()
+        self.selmin_spin.setRange(50, 100)
+        self.selmin_spin.setValue(self.settings.data.get("select_min_score", 90.0))
+        self.include_edit = QLineEdit()
+        self.include_edit.setPlaceholderText("include globs (comma-separated) e.g. */portraits/*, *2024*")
+        self.include_edit.setText(self.settings.data.get("include_globs", ""))
+        self.exclude_edit = QLineEdit()
+        self.exclude_edit.setPlaceholderText("exclude globs e.g. */screenshots/*, *memes*")
+        self.exclude_edit.setText(self.settings.data.get("exclude_globs", ""))
 
         export_btn = QPushButton("Export (triage)")
         export_btn.clicked.connect(self.export_all)
 
+        settings_btn = QPushButton("Settings")
+        settings_btn.clicked.connect(self.open_settings)
+
         top = QHBoxLayout()
-        top.addWidget(open_btn); top.addStretch(1)
+        top.addWidget(open_btn)
+        top.addWidget(settings_btn)
+        top.addStretch(1)
         top.addWidget(QLabel("Filter:")); top.addWidget(self.filter_box)
         top.addStretch(1)
         top.addWidget(QLabel("Pass≥")); top.addWidget(self.pass_spin)
@@ -82,6 +99,15 @@ class MainWindow(QMainWindow):
 
         cfg = ScanConfig(
             pass_threshold=float(self.pass_spin.value()),
+            sel_min_score=float(self.selmin_spin.value()),
+            include_globs=self.include_edit.text().strip(),
+            exclude_globs=self.exclude_edit.text().strip(),
+            dedupe_tol=self.settings.data.get("dedupe_tol", 8),
+            w_sharp=self.settings.data.get("w_sharp", 0.5),
+            w_contrast=self.settings.data.get("w_contrast", 0.3),
+            w_noise=self.settings.data.get("w_noise", 0.2),
+            blur_target=self.settings.data.get("blur_target", 150.0),
+            noise_max=self.settings.data.get("noise_max", 12.0),
         )
         self.scan_manager = ScanManager(folder, cfg)
         self.scan_manager.image_scanned.connect(self.on_item)
@@ -106,9 +132,14 @@ class MainWindow(QMainWindow):
             include_globs=self.include_edit.text().strip(),
             exclude_globs=self.exclude_edit.text().strip(),
         )
-        self.export_manager = ExportManager(to_export, Path(out),
-                                          apply_autofix=self.autofix_chk.isChecked(),
-                                          cfg=cfg)
+        self.export_manager = ExportManager(
+            to_export,
+            Path(out),
+            buckets=self.settings.data.get("buckets", [1024, 1152, 1216]),
+            apply_autofix=self.autofix_chk.isChecked(),
+            cfg=cfg,
+            lm_settings=self.settings.data.get("lmstudio", {})
+        )
         self.export_manager.progress.connect(self.on_progress)
         self.export_manager.finished.connect(self.on_export_done)
         self.progress.setValue(0); self.progress.setFormat("Exporting %p%")
@@ -147,6 +178,18 @@ class MainWindow(QMainWindow):
             pm = QPixmap(self.current["path"]).scaled(QSize(720,720), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.preview.set_pixmap(pm)
             self.preview_label.setText(f"{self.current['name']} — {self.current['status']} | score: {self.current['scores']['final']:.1f}")
+
+    def open_settings(self):
+        dialog = SettingsDialog(self.settings, self)
+        if dialog.exec():
+            # Dialog was accepted (OK clicked), update UI from settings data
+            self.settings.load() # Reload data from disk
+            self.pass_spin.setValue(self.settings.data.get("pass_threshold", 95.0))
+            self.selmin_spin.setValue(self.settings.data.get("select_min_score", 90.0))
+            self.include_edit.setText(self.settings.data.get("include_globs", ""))
+            self.exclude_edit.setText(self.settings.data.get("exclude_globs", ""))
+            self.autofix_chk.setChecked(self.settings.data.get("autofix", True))
+            self.statusBar().showMessage("Settings saved.", 3000)
 
 def headless_main(folder: Path):
     from worker import ScanManager, ScanConfig
