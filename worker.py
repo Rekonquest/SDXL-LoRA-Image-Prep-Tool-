@@ -9,8 +9,10 @@ from PySide6.QtGui import QImage
 from image_processing import (
     load_image_fix, pil_to_cv, passes_basic_rules, auto_rotate,
     phash64, phash_distance, score_image, bucket_square, cv_to_pil,
-    auto_fix_to_standard
+    auto_fix_to_standard, intelligent_square_crop
 )
+from utils import slugify
+from caption_providers import lmstudio_caption, lmstudio_tags, lmstudio_describe
 
 @dataclass
 class ScanConfig:
@@ -251,8 +253,28 @@ class ExportImageRunnable(QRunnable):
                         out = intelligent_square_crop(cv, target)
                     else:
                         out = bucket_square(cv, target)
-                    saved_path = self.out_dir / target_dir / f"{src.stem}.{target}.png"
-                    cv_to_pil(out).save(saved_path, optimize=True)
+
+                    final_stem = src.stem
+                    if self.lm_settings.get("enabled") and self.lm_settings.get("rename_pattern"):
+                        try:
+                            desc = lmstudio_describe(
+                                self.lm_settings.get("endpoint"),
+                                self.lm_settings.get("model"),
+                                str(src)
+                            )
+                            slug = slugify(desc) if (desc and desc != "untitled") else "image"
+                            final_stem = self.lm_settings["rename_pattern"].format(
+                                prefix=self.lm_settings.get("prefix", ""),
+                                index=self.index,
+                                slug=slug
+                            )
+                        except Exception as e:
+                            print(f"LM Studio rename failed for {src.name}: {e}")
+                            final_stem = f"rename-failed-{self.index:05d}"
+
+                    saved_path = self.out_dir / target_dir / f"{final_stem}.{target}.png"
+                    pil_out = cv_to_pil(out)
+                    pil_out.save(saved_path, optimize=True)
                     category_out = target_dir
 
                     if self.lm_settings.get("enabled"):
@@ -272,7 +294,7 @@ class ExportImageRunnable(QRunnable):
                                     cap_prompt,
                                     self.lm_settings.get("vision_mode", False)
                                 )
-                                (saved_path.parent / f"{saved_path.stem}.txt").write_text(caption, encoding="utf-8")
+                                (saved_path.parent / f"{final_stem}.txt").write_text(caption, encoding="utf-8")
                             except Exception as e:
                                 print(f"LM Studio caption failed for {src.name}: {e}")
 
@@ -285,7 +307,7 @@ class ExportImageRunnable(QRunnable):
                                     tag_prompt,
                                     self.lm_settings.get("vision_mode", False)
                                 )
-                                (saved_path.parent / f"{saved_path.stem}.tags.txt").write_text(tags, encoding="utf-8")
+                                (saved_path.parent / f"{final_stem}.tags.txt").write_text(tags, encoding="utf-8")
                             except Exception as e:
                                 print(f"LM Studio tagging failed for {src.name}: {e}")
                 else:
